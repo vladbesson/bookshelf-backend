@@ -2,28 +2,34 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const User = require('../models/user');
 
-const NotFoundError = require('../errors/not-found-err');
-const BadReq = require('../errors/bad-req');
-const Unauthorized = require('../errors/unauthorized');
-
-module.exports.getUsers = (req, res, next) => {
+module.exports.getUsers = (req, res) => {
   User.find({})
     .then((users) => res.send({ data: users }))
-    .catch(next);
+    .catch(() => res.status(500).send({ message: 'На сервере произошла ошибка' }));
 };
 
-module.exports.getUserById = async (req, res, next) => {
+module.exports.getUserById = async (req, res) => {
   await User.findById(req.params.id)
     .populate('books')
-    .orFail(new NotFoundError('Нет такого пользователя'))
+    .orFail(() => res.status(404).send({ message: 'Запрашиваемого юзера не существует' }))
     .then((user) => res.send({ data: user }))
-    .catch(next);
+    .catch((err) => {
+      if (err.name === 'CastError') {
+        res.status(404).send({ message: 'Пользователь не найден' });
+      } else {
+        res.status(500).send({ message: 'На сервере произошла ошибка' });
+      }
+    });
 };
 
-module.exports.createUser = (req, res, next) => {
+module.exports.createUser = (req, res) => {
   const {
     name, avatar, email, password,
   } = req.body;
+  if ((password === undefined) || (password.trim().length < 8)) {
+    res.status(400).send({ message: 'Невалидные данные' });
+    return;
+  }
   bcrypt.hash(password, 10)
     .then((hash) => {
       User.create({
@@ -32,7 +38,15 @@ module.exports.createUser = (req, res, next) => {
         .then((user) => res.send({
           name: user.name, avatar: user.avatar, email: user.email,
         }))
-        .catch((err) => next(new BadReq(err.message)));
+        .catch((err) => {
+          if (err.name === 'ValidationError') {
+            res.status(400).send({ message: 'Невалидные данные' });
+          } else if (err.name === 'MongoError') {
+            res.status(409).send({ message: 'Такой пользователь уже существует' });
+          } else {
+            res.status(500).send({ message: 'На сервере произошла ошибка' });
+          }
+        });
     });
 };
 
@@ -50,5 +64,5 @@ module.exports.login = (req, res, next) => {
         });
       res.send({ message: 'Авторизация прошла успешна. Токен записан в куки' });
     })
-    .catch((err) => next(new Unauthorized(err.message)));
+    .catch(next);
 };
